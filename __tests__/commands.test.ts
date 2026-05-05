@@ -36,6 +36,84 @@ function mockArker(impl: {
   } as any;
 }
 
+describe("--field flag", () => {
+  it("forkCommand --field id outputs only the ID", async () => {
+    const arker = mockArker({ fork: async () => ({ id: "child999" }) });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const code = await forkCommand(arker, ["arkuntu"], { field: "id" });
+      expect(code).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith("child999");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("listCommand --field vm_id prints one ID per item", async () => {
+    const arker = mockArker({
+      list: async () => ({
+        total: 2,
+        items: [
+          { vm_id: "01A", name: "first", base_image: "arkuntu", region: "us", created_at: "t" },
+          { vm_id: "01B", name: "second", base_image: "arkuntu", region: "us", created_at: "t" },
+        ],
+      }),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const code = await listCommand(arker, { field: "vm_id" });
+      expect(code).toBe(0);
+      expect(logSpy).toHaveBeenNthCalledWith(1, "01A");
+      expect(logSpy).toHaveBeenNthCalledWith(2, "01B");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("runCommand --field exitCode prints just the number", async () => {
+    const arker = mockArker({
+      run: async () => ({
+        stdout: new TextEncoder().encode("hi"),
+        stderr: new Uint8Array(),
+        exitCode: 7,
+        durationMs: 1,
+        sessionId: "s",
+        cwd: "/",
+      }),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const code = await runCommand(arker, ["01ABC", "echo", "hi"], { field: "exitCode" });
+      expect(code).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith("7");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("runCommand --field stdout writes bytes (Uint8Array) directly", async () => {
+    const bytes = new TextEncoder().encode("payload");
+    const arker = mockArker({
+      run: async () => ({
+        stdout: bytes,
+        stderr: new Uint8Array(),
+        exitCode: 0,
+        durationMs: 1,
+        sessionId: "s",
+        cwd: "/",
+      }),
+    });
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      const code = await runCommand(arker, ["01ABC", "echo", "hi"], { field: "stdout" });
+      expect(code).toBe(0);
+      expect(writeSpy).toHaveBeenCalledWith(bytes);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+});
+
 describe("listCommand", () => {
   it("calls arker.list with parsed flags", async () => {
     const arker = mockArker({

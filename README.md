@@ -33,8 +33,8 @@ env: `ARKER_API_KEY=... arker list`. Config lives in `~/.arker/config`.
 # Create a VM by forking the public arkuntu template
 arker fork arkuntu --name hello
 
-# Returns the new VM's ULID; capture it for later commands
-ID=$(arker fork arkuntu --name hello --json | jq -r .id)
+# Capture just the ID for later commands (no jq needed)
+ID=$(arker fork arkuntu --name hello --field id)
 
 # Execute code
 arker run "$ID" 'python3 -c "print(2+2)"'
@@ -67,7 +67,8 @@ Every verb mirrors a single SDK method.
 | `arker config {set,get} <key> [value]` | (CLI-only) |
 | `arker whoami` | (CLI-only) |
 
-Global flags: `--help`, `--version`, `--json` (machine-readable), `--no-color`,
+Global flags: `--help`, `--version`, `--json` (machine-readable),
+`--field NAME` (extract one property as plain text), `--no-color`,
 `--api-key`, `--base-url`.
 
 ### `fork`
@@ -117,15 +118,41 @@ arker write-file "$ID" /home/user/large.bin < large.bin
 arker read-file "$ID" /home/user/data.csv > local-copy.csv
 ```
 
-### Machine-readable output
+### Scripting & machine-readable output
 
-Every command accepts `--json`:
+Two flags cover the common patterns:
+
+**`--field NAME`** — extract one property as plain text, no jq required:
 
 ```bash
-arker list --json | jq '.items[].vm_id'
-arker fork arkuntu --json | jq -r .id
-arker run "$ID" --json 'echo hi' | jq '.exitCode, .stdout'
+ID=$(arker fork arkuntu --field id)              # capture ID for later
+arker list --field vm_id                          # one ID per line
+arker list --field name                           # one name per line
+arker run "$ID" 'echo hi' --field stdout          # just the bytes
+arker run "$ID" 'date +%s' --field exitCode       # just "0"
+arker whoami --field apiKey                       # masked key
 ```
+
+For `list`, `--field` operates on each item — one value per line.
+
+**`--json`** — full structured output for tools that want it:
+
+```bash
+arker list --json | jq '.items[] | {id: .vm_id, name}'
+arker fork arkuntu --json
+arker run "$ID" 'echo hi' --json
+```
+
+The CLI also separates streams cleanly: status messages
+(`Forked X → Y`, `Deleted X`) go to **stderr**, structured values go
+to **stdout**. So `$()` capture works without any flags for commands
+where the default stdout is already what you want:
+
+```bash
+ID=$(arker fork arkuntu --name hello)             # also works — ID on stdout
+```
+
+`--field id` is the explicit form; the bare `$()` is the implicit form.
 
 ### Errors
 

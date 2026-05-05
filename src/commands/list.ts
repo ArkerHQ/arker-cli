@@ -1,5 +1,5 @@
 import type { Arker } from "@arker-ai/sdk";
-import { printJson, printTable, printInfo, printError } from "../output.js";
+import { printJson, printTable, printField, printInfo, printError } from "../output.js";
 
 /**
  * arker list
@@ -14,11 +14,17 @@ export async function listCommand(
   const offset = typeof flags.offset === "string" ? parseInt(flags.offset, 10) : undefined;
   const q = typeof flags.q === "string" ? flags.q : undefined;
   const sort = typeof flags.sort === "string" ? flags.sort : undefined;
+  const field = typeof flags.field === "string" ? flags.field : undefined;
 
   try {
     const result = await arker.list({ limit, offset, q, sort });
     if (flags.json === true) {
       printJson(result);
+      return 0;
+    }
+    if (field) {
+      // --field operates on each item — one value per line
+      printField(result.items, field);
       return 0;
     }
     if (result.items.length === 0) {

@@ -44,6 +44,38 @@ export function printJson(data: unknown): void {
   console.log(JSON.stringify(data, null, 2));
 }
 
+/**
+ * Extract a single property from a result and print it as plain text.
+ * For arrays, prints one value per line. For Uint8Array-valued fields
+ * (e.g. RunResult.stdout), writes raw bytes.
+ *
+ * Returns true if the field was found (even if value was null/undefined),
+ * false if the result has no such property at all.
+ */
+export function printField(data: unknown, field: string): boolean {
+  if (Array.isArray(data)) {
+    for (const item of data) printField(item, field);
+    return true;
+  }
+  if (data === null || typeof data !== "object") return false;
+  if (!(field in (data as Record<string, unknown>))) return false;
+  const v = (data as Record<string, unknown>)[field];
+  if (v === undefined || v === null) {
+    console.log("");
+    return true;
+  }
+  if (v instanceof Uint8Array) {
+    process.stdout.write(v);
+    return true;
+  }
+  if (typeof v === "object") {
+    console.log(JSON.stringify(v));
+    return true;
+  }
+  console.log(String(v));
+  return true;
+}
+
 /** Print error message to stderr (red). */
 export function printError(msg: string): void {
   console.error(colorize(RED, msg));

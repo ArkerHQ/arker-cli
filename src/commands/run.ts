@@ -1,5 +1,5 @@
 import type { Arker } from "@arker-ai/sdk";
-import { printJson, printError } from "../output.js";
+import { printJson, printField, printError } from "../output.js";
 
 /**
  * arker run <id> <code>
@@ -21,6 +21,7 @@ export async function runCommand(
 
   const sessionId = typeof flags["session-id"] === "string" ? flags["session-id"] : undefined;
   const timeout = typeof flags.timeout === "string" ? parseInt(flags.timeout, 10) : undefined;
+  const field = typeof flags.field === "string" ? flags.field : undefined;
 
   try {
     const result = await arker.vm(id).run(code, {
@@ -36,6 +37,10 @@ export async function runCommand(
         sessionId: result.sessionId,
         cwd: result.cwd,
       });
+      return 0;
+    }
+    if (field) {
+      printField(result, field);
       return 0;
     }
     if (result.stdout.length > 0) process.stdout.write(result.stdout);

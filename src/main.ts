@@ -8,7 +8,7 @@ import { readFileCommand, writeFileCommand } from "./commands/files.js";
 import { runCommand } from "./commands/run.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
-const VERSION = "0.2.3";
+const VERSION = "0.3.0";
 
 const HELP = `arker v${VERSION} — CLI for the Arker virtual computer platform
 
@@ -26,17 +26,20 @@ Commands:
   whoami                          Show resolved config
 
 Global flags:
-  --help          Show help
-  --version       Show version
-  --json          Output raw JSON
-  --no-color      Disable colored output
-  --api-key KEY   Override API key for this invocation
-  --base-url URL  Override base URL for this invocation
+  --help            Show help
+  --version         Show version
+  --json            Output raw JSON
+  --field NAME      Print one property as plain text (script-friendly)
+  --no-color        Disable colored output
+  --api-key KEY     Override API key for this invocation
+  --base-url URL    Override base URL for this invocation
 
 Examples:
+  ID=$(arker fork arkuntu --field id)         # capture just the ID
   arker fork arkuntu --name hello
   arker run 01ABC... 'echo hi'
-  arker write-file 01ABC... /home/user/x.txt 'hi'
+  arker run 01ABC... 'date' --field stdout    # only the command's stdout
+  arker list --field vm_id                    # one ID per line
   echo 'hi' | arker write-file 01ABC... /home/user/x.txt -
   arker read-file 01ABC... /home/user/x.txt > out.txt
   arker delete 01ABC...
