@@ -1,0 +1,60 @@
+const RESET = "\x1b[0m";
+const RED = "\x1b[31m";
+const GREEN = "\x1b[32m";
+const DIM = "\x1b[2m";
+
+function colorsEnabled(): boolean {
+  if (process.env.NO_COLOR !== undefined) return false;
+  if (!process.stderr.isTTY) return false;
+  return true;
+}
+
+function colorize(color: string, text: string): string {
+  if (!colorsEnabled()) return text;
+  return `${color}${text}${RESET}`;
+}
+
+/** Print aligned table to stdout. */
+export function printTable(headers: string[], rows: string[][]): void {
+  if (rows.length === 0) return;
+
+  const colWidths = headers.map((h, i) => {
+    let max = h.length;
+    for (const row of rows) {
+      const cell = row[i] ?? "";
+      if (cell.length > max) max = cell.length;
+    }
+    return max;
+  });
+
+  const pad = (s: string, width: number) => s + " ".repeat(Math.max(0, width - s.length));
+
+  const headerLine = headers.map((h, i) => pad(h, colWidths[i])).join("  ");
+  const separator = colWidths.map((w) => "-".repeat(w)).join("  ");
+
+  console.log(headerLine);
+  console.log(separator);
+  for (const row of rows) {
+    console.log(row.map((cell, i) => pad(cell ?? "", colWidths[i])).join("  "));
+  }
+}
+
+/** Print JSON to stdout with 2-space indent. */
+export function printJson(data: unknown): void {
+  console.log(JSON.stringify(data, null, 2));
+}
+
+/** Print error message to stderr (red). */
+export function printError(msg: string): void {
+  console.error(colorize(RED, msg));
+}
+
+/** Print info message to stderr (dim). */
+export function printInfo(msg: string): void {
+  console.error(colorize(DIM, msg));
+}
+
+/** Print success message to stderr (green). */
+export function printSuccess(msg: string): void {
+  console.error(colorize(GREEN, msg));
+}

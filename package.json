@@ -1,0 +1,44 @@
+{
+  "name": "@arker-ai/cli",
+  "version": "0.2.3",
+  "description": "CLI for the Arker virtual computer platform.",
+  "type": "module",
+  "bin": {
+    "arker": "dist/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "bun run build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "bun run build"
+  },
+  "dependencies": {
+    "@arker-ai/sdk": "^0.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "vitest": "^3.0.0"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://arker.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ArkerHQ/arker-cli.git"
+  },
+  "bugs": "https://github.com/ArkerHQ/arker-cli/issues",
+  "keywords": [
+    "arker",
+    "vm",
+    "sandbox",
+    "agent",
+    "cli"
+  ]
+}
