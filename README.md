@@ -9,7 +9,7 @@ write files — all from your terminal. Thin shell over
 
 ```bash
 npm install -g @arker-ai/cli
-# or: bun add -g @arker-ai/cli, pnpm add -g @arker-ai/cli
+# or:  bun add -g @arker-ai/cli, pnpm add -g @arker-ai/cli, npx @arker-ai/cli ...
 ```
 
 Requires Node ≥ 18. The package is named `@arker-ai/cli`; the binary
@@ -17,33 +17,36 @@ on your `$PATH` is `arker`.
 
 ## Configure
 
-Once, then forget:
+Three ways, highest precedence first:
+
+1. Per-invocation flag: `arker --api-key ark_live_... list`
+2. Env var: `ARKER_API_KEY=ark_live_... arker list`
+3. Persisted config (most common): `arker config set api-key ark_live_...`
+
+Config lives in `~/.arker/config`. The base URL defaults to
+`https://aws-burst-us-west-2.arker.ai` and rarely needs overriding.
 
 ```bash
 arker config set api-key ark_live_...
 arker whoami
+# API key:  ark_...QLVH
+# Base URL: https://aws-burst-us-west-2.arker.ai
 ```
-
-Or pass per-invocation: `arker --api-key ark_live_... list`. Or via
-env: `ARKER_API_KEY=... arker list`. Config lives in `~/.arker/config`.
 
 ## Quickstart
 
 ```bash
-# Create a VM by forking the public arkuntu template
-arker fork arkuntu --name hello
-
-# Capture just the ID for later commands (no jq needed)
+# Fork a VM from the public arkuntu template, capture just the ID
 ID=$(arker fork arkuntu --name hello --field id)
 
-# Execute code
-arker run "$ID" 'python3 -c "print(2+2)"'
-arker run "$ID" 'echo hi'
+# Run code
+arker run "$ID" 'python3 -c "print(2+2)"'        # → 4
+arker run "$ID" 'echo hi'                         # → hi
 arker run "$ID" 'ls -la /home/user/'
 
-# Write and read files (bytes, not strings — read-file → stdout)
+# Write & read files
 arker write-file "$ID" /home/user/data.csv 'a,b\n1,2\n'
-arker read-file  "$ID" /home/user/data.csv
+arker read-file  "$ID" /home/user/data.csv > local-copy.csv
 echo "from stdin" | arker write-file "$ID" /home/user/x.txt -
 
 # List, fork-of-fork, clean up
@@ -67,9 +70,8 @@ Every verb mirrors a single SDK method.
 | `arker config {set,get} <key> [value]` | (CLI-only) |
 | `arker whoami` | (CLI-only) |
 
-Global flags: `--help`, `--version`, `--json` (machine-readable),
-`--field NAME` (extract one property as plain text), `--no-color`,
-`--api-key`, `--base-url`.
+Global flags: `--help`, `--version`, `--json`, `--field NAME`,
+`--no-color`, `--api-key KEY`, `--base-url URL`.
 
 ### `fork`
 
@@ -80,7 +82,12 @@ your account is born by forking a public template (default name:
 ```bash
 arker fork arkuntu --name first-sandbox
 arker fork "$ID" --name child --region us-west-2
+arker fork arkuntu --public --name shared-template    # let other orgs fork it
 ```
+
+Default output: success message on stderr, the new VM's ID on stdout —
+so `$()` capture works without any flags. Use `--field id` for an
+explicit, message-free form.
 
 ### `run`
 
@@ -96,65 +103,112 @@ arker run "$ID" 'bash -c "for i in 1 2 3; do echo line-$i; done"'
 # Pin a session for stateful REPLs
 arker run "$ID" --session-id repl1 'x = 42'
 arker run "$ID" --session-id repl1 'print(x)'        # → 42
+
+# Bound the run
+arker run "$ID" 'sleep 60' --timeout 5000             # 5-second timeout
 ```
 
 ### File ops
 
-Bytes, both directions. `write-file` accepts inline data or `-` for
-stdin (or omit the third arg entirely — same as `-`):
+Bytes, both directions. `write-file` accepts inline data, `-` for
+stdin, or omitted (also stdin):
 
 ```bash
+# Inline string (multi-line OK)
 arker write-file "$ID" /home/user/notes.md '# inline
 multi-line
 content'
 
-# Pipe in a local file
+# Pipe a local file in
 cat large.bin | arker write-file "$ID" /home/user/large.bin -
 
-# Or:
+# Or via shell redirection
 arker write-file "$ID" /home/user/large.bin < large.bin
 
-# read-file emits raw bytes — redirect to a local file:
+# read-file emits raw bytes — redirect to a local file
 arker read-file "$ID" /home/user/data.csv > local-copy.csv
+
+# Round-trip
+arker write-file "$ID" /home/user/x.bin < input.bin
+arker read-file  "$ID" /home/user/x.bin > output.bin
+diff input.bin output.bin                              # silent → identical
 ```
 
-### Scripting & machine-readable output
+The SDK auto-picks chunk fast-path (≤ 4 MB) vs presigned-bypass
+(> 4 MB) under the hood — large files don't traverse the API layer.
 
-Two flags cover the common patterns:
+### `list`
 
-**`--field NAME`** — extract one property as plain text, no jq required:
+Paginated VM list. Default sort is `-created_at` (newest first).
 
 ```bash
-ID=$(arker fork arkuntu --field id)              # capture ID for later
-arker list --field vm_id                          # one ID per line
-arker list --field name                           # one name per line
-arker run "$ID" 'echo hi' --field stdout          # just the bytes
-arker run "$ID" 'date +%s' --field exitCode       # just "0"
-arker whoami --field apiKey                       # masked key
+arker list                                            # table
+arker list --limit 50 --sort -created_at
+arker list --q "experiment-2026"                      # name search
 ```
 
-For `list`, `--field` operates on each item — one value per line.
+### `delete`
 
-**`--json`** — full structured output for tools that want it:
+```bash
+arker delete "$ID"
+# Deleted 01KQX...
+```
+
+Idempotent: deleting an already-gone VM returns `not_found` (CLI exits
+non-zero); silence it with `arker delete "$ID" 2>/dev/null || true`.
+
+## Scripting & machine-readable output
+
+Two flags cover the common patterns.
+
+### `--field NAME` — extract one property as plain text
+
+No jq required. For arrays (e.g. `list`), prints one value per line.
+For `Uint8Array` fields (`run` `stdout`/`stderr`), writes raw bytes.
+
+```bash
+ID=$(arker fork arkuntu --field id)                   # capture ID
+arker list --field vm_id                              # one ID per line
+arker list --field name                               # one name per line
+arker run "$ID" 'echo hi' --field stdout              # just the bytes
+arker run "$ID" 'date +%s' --field exitCode           # just "0"
+arker whoami --field apiKey                           # masked key
+arker whoami --field baseUrl                          # current base URL
+```
+
+Field names per command:
+
+| Command | Available `--field` values |
+|---|---|
+| `arker fork` | `id` |
+| `arker list` | `vm_id`, `name`, `base_image`, `region`, `created_at` (per item) |
+| `arker run` | `stdout`, `stderr`, `exitCode`, `durationMs`, `sessionId`, `cwd` |
+| `arker whoami` | `apiKey`, `baseUrl` |
+
+### `--json` — full structured output
 
 ```bash
 arker list --json | jq '.items[] | {id: .vm_id, name}'
-arker fork arkuntu --json
-arker run "$ID" 'echo hi' --json
+arker fork arkuntu --json                              # {"id":"01KQ..."}
+arker run "$ID" 'echo hi' --json                       # full RunResult
+arker whoami --json
 ```
 
-The CLI also separates streams cleanly: status messages
-(`Forked X → Y`, `Deleted X`) go to **stderr**, structured values go
-to **stdout**. So `$()` capture works without any flags for commands
-where the default stdout is already what you want:
+### Implicit stdout/stderr separation
+
+Status messages (`Forked X → Y`, `Deleted X`) go to **stderr**;
+structured values go to **stdout**. So shell capture works for
+default-mode commands without any flags:
 
 ```bash
-ID=$(arker fork arkuntu --name hello)             # also works — ID on stdout
+ID=$(arker fork arkuntu --name hello)                  # ID on stdout (works)
+arker fork arkuntu --name hello 2>/dev/null            # suppress the success line
 ```
 
-`--field id` is the explicit form; the bare `$()` is the implicit form.
+`--field id` is the explicit, future-proof form. The bare `$()` is
+the implicit, terse form. Use whichever fits.
 
-### Errors
+## Errors
 
 The CLI exits non-zero on failure and prints the SDK error code to
 stderr:
@@ -176,7 +230,7 @@ For each setting, the first non-empty source wins:
 1. CLI flag (`--api-key`, `--base-url`)
 2. Env var (`ARKER_API_KEY`, `ARKER_BASE_URL`)
 3. `~/.arker/config` (set via `arker config set ...`)
-4. Built-in default (base URL → `https://aws-burst-us-west-2.arker.ai`)
+4. Built-in default (`base-url` → `https://aws-burst-us-west-2.arker.ai`)
 
 ## See also
 
@@ -186,6 +240,8 @@ For each setting, the first non-empty source wins:
 - [`arker` on PyPI](https://pypi.org/project/arker/) — Python SDK with
   the same surface.
 - [arker.ai](https://arker.ai) — docs, dashboard, billing.
+- [github.com/ArkerHQ/arker-cli](https://github.com/ArkerHQ/arker-cli)
+  — source, issues.
 
 ## License
 

@@ -8,7 +8,7 @@ import { readFileCommand, writeFileCommand } from "./commands/files.js";
 import { runCommand } from "./commands/run.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 
 const HELP = `arker v${VERSION} — CLI for the Arker virtual computer platform
 
