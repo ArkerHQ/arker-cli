@@ -1,11 +1,10 @@
 import type { Arker } from "@arker-ai/sdk";
-import { printJson, printField, printSuccess, printError } from "../output.js";
+import { printJson, printSuccess, printError } from "../output.js";
 
 /**
- * arker fork <id|template>
+ * arker fork <source>
  *
- * Mirrors `Arker.vm(id).fork({ name, isPublic, region })`. Pass a template
- * alias like `arkuntu` for the create-from-template case.
+ * Mirrors `Arker.vm(id).fork({ name })`.
  */
 export async function forkCommand(
   arker: Arker,
@@ -14,23 +13,16 @@ export async function forkCommand(
 ): Promise<number> {
   const id = positional[0];
   if (!id) {
-    printError("Usage: arker fork <id|template> [--name <n>] [--region <r>] [--public]");
+    printError("Usage: arker fork <source> [--name <name>]");
     return 1;
   }
   const name = typeof flags.name === "string" ? flags.name : undefined;
-  const region = typeof flags.region === "string" ? flags.region : undefined;
-  const isPublic = flags.public === true;
-  const field = typeof flags.field === "string" ? flags.field : undefined;
 
   try {
-    const child = await arker.vm(id).fork({ name, region, isPublic });
+    const child = await arker.vm(id).fork({ name });
     const result = { id: child.id };
     if (flags.json === true) {
       printJson(result);
-      return 0;
-    }
-    if (field) {
-      printField(result, field);
       return 0;
     }
     printSuccess(`Forked ${id} → ${child.id}`);

@@ -1,5 +1,5 @@
 import type { Arker } from "@arker-ai/sdk";
-import { printSuccess, printError } from "../output.js";
+import { printJson, printSuccess, printError } from "../output.js";
 
 /**
  * arker delete <id>
@@ -17,8 +17,12 @@ export async function deleteCommand(
     return 1;
   }
   try {
-    await arker.vm(id).delete();
-    if (flags.json !== true) printSuccess(`Deleted ${id}`);
+    const result = await arker.vm(id).delete();
+    if (flags.json === true) {
+      printJson(result);
+      return 0;
+    }
+    printSuccess(`Deleted ${id}`);
     return 0;
   } catch (err: any) {
     printError(`delete failed: ${err.message ?? err}`);

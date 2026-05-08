@@ -11,8 +11,11 @@
     "isolatedModules": true,
     "declaration": true,
     "outDir": "./dist",
-    "rootDir": "./src",
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@arker-ai/sdk": ["../arker-sdk/typescript/src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

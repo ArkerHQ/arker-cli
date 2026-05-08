@@ -1,11 +1,10 @@
-import type { Arker } from "@arker-ai/sdk";
-import { printJson, printField, printError } from "../output.js";
+import type { Arker, RunResult } from "@arker-ai/sdk";
+import { printInfo, printJson, printError } from "../output.js";
 
 /**
  * arker run <id> <code>
  *
- * Mirrors `Arker.vm(id).run(code, { sessionId, timeout })`. Streams the
- * SDK's `RunResult` to stdout/stderr; exits with the run's exit code.
+ * Mirrors `Arker.vm(id).run(code, { session_id, timeout })`.
  */
 export async function runCommand(
   arker: Arker,
@@ -15,39 +14,72 @@ export async function runCommand(
   const id = positional[0];
   const code = positional.slice(1).join(" ");
   if (!id || !code) {
-    printError("Usage: arker run <id> <code> [--session-id <s>] [--timeout <ms>]");
+    printError("Usage: arker run <id> [--session-id <s>] [--timeout <ms>] <code>");
     return 1;
   }
 
   const sessionId = typeof flags["session-id"] === "string" ? flags["session-id"] : undefined;
-  const timeout = typeof flags.timeout === "string" ? parseInt(flags.timeout, 10) : undefined;
-  const field = typeof flags.field === "string" ? flags.field : undefined;
+  const timeout = parseOptionalNumber(flags.timeout);
+  if (timeout === null) {
+    printError("Invalid --timeout value; expected milliseconds.");
+    return 1;
+  }
 
   try {
     const result = await arker.vm(id).run(code, {
-      sessionId,
-      timeout: timeout !== undefined && !isNaN(timeout) ? timeout : undefined,
+      session_id: sessionId,
+      timeout,
     });
     if (flags.json === true) {
-      printJson({
-        stdout: new TextDecoder().decode(result.stdout),
-        stderr: new TextDecoder().decode(result.stderr),
-        exitCode: result.exitCode,
-        durationMs: result.durationMs,
-        sessionId: result.sessionId,
-        cwd: result.cwd,
-      });
-      return 0;
+      printJson(runResultForJson(result));
+      return result.type === "completed" ? result.exitCode : 0;
     }
-    if (field) {
-      printField(result, field);
-      return 0;
-    }
-    if (result.stdout.length > 0) process.stdout.write(result.stdout);
-    if (result.stderr.length > 0) process.stderr.write(result.stderr);
-    return result.exitCode;
+    return printHumanRunResult(result);
   } catch (err: any) {
     printError(`run failed: ${err.message ?? err}`);
     return 1;
   }
+}
+
+function printHumanRunResult(result: RunResult): number {
+  switch (result.type) {
+    case "completed":
+      if (result.stdout.length > 0) process.stdout.write(result.stdout);
+      if (result.stderr.length > 0) process.stderr.write(result.stderr);
+      return result.exitCode;
+    case "background":
+      printInfo(`Background run ${result.completed ? "completed" : "started"}`);
+      console.log(result.runId);
+      return 0;
+    case "pty":
+      console.log(`session_id: ${result.sessionId}`);
+      console.log(`ws_url: ${result.wsUrl}`);
+      return 0;
+  }
+}
+
+function runResultForJson(result: RunResult): unknown {
+  switch (result.type) {
+    case "completed":
+      return {
+        type: result.type,
+        completed: result.completed,
+        stdout: new TextDecoder().decode(result.stdout),
+        stdoutEncoding: result.stdoutEncoding,
+        stderr: new TextDecoder().decode(result.stderr),
+        stderrEncoding: result.stderrEncoding,
+        exitCode: result.exitCode,
+      };
+    case "background":
+      return result;
+    case "pty":
+      return result;
+  }
+}
+
+function parseOptionalNumber(value: string | boolean | undefined): number | undefined | null {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

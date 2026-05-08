@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   arkerHome,
+  DEFAULT_REGION,
   ensureArkerDir,
   loadConfig,
   saveConfig,
   handleConfigCommand,
 } from "../src/config.js";
+import { resolveClientOptions } from "../src/client.js";
 
 let tempDir: string;
 let origEnv: Record<string, string | undefined>;
@@ -18,11 +20,15 @@ beforeEach(() => {
   origEnv = {
     ARKER_HOME: process.env.ARKER_HOME,
     ARKER_API_KEY: process.env.ARKER_API_KEY,
+    ARKER_REGION: process.env.ARKER_REGION,
     ARKER_BASE_URL: process.env.ARKER_BASE_URL,
+    ARKER_BURST_BASE_URL: process.env.ARKER_BURST_BASE_URL,
   };
   process.env.ARKER_HOME = tempDir;
   delete process.env.ARKER_API_KEY;
+  delete process.env.ARKER_REGION;
   delete process.env.ARKER_BASE_URL;
+  delete process.env.ARKER_BURST_BASE_URL;
 });
 
 afterEach(() => {
@@ -62,17 +68,20 @@ describe("saveConfig + loadConfig", () => {
   });
 
   it("partial save does not clobber other keys", () => {
-    saveConfig({ apiKey: "ark_test", baseUrl: "https://custom.example.com" });
+    saveConfig({ apiKey: "ark_test", region: "aws-us-east-1", baseUrl: "https://custom.example.com" });
     saveConfig({ apiKey: "ark_updated" });
     const config = loadConfig();
     expect(config.apiKey).toBe("ark_updated");
+    expect(config.region).toBe("aws-us-east-1");
     expect(config.baseUrl).toBe("https://custom.example.com");
   });
 
-  it("missing config file returns defaults", () => {
+  it("missing config file returns default region only", () => {
     const config = loadConfig();
     expect(config.apiKey).toBeUndefined();
-    expect(config.baseUrl).toBe("https://aws-burst-us-west-2.arker.ai");
+    expect(config.region).toBe(DEFAULT_REGION);
+    expect(config.baseUrl).toBeUndefined();
+    expect(config.burstBaseUrl).toBeUndefined();
   });
 
   it("env var overrides file value", () => {
@@ -94,6 +103,43 @@ describe("saveConfig + loadConfig", () => {
     process.env.ARKER_BASE_URL = "https://env.example.com";
     const config = loadConfig();
     expect(config.baseUrl).toBe("https://env.example.com");
+  });
+
+  it("config precedence is flags over env over file over default region", () => {
+    saveConfig({
+      apiKey: "ark_from_file",
+      region: "aws-us-east-1",
+      baseUrl: "https://file.example.com",
+      burstBaseUrl: "https://burst-file.example.com",
+    });
+    process.env.ARKER_API_KEY = "ark_from_env";
+    process.env.ARKER_REGION = "aws-eu-west-1";
+    process.env.ARKER_BASE_URL = "https://env.example.com";
+    process.env.ARKER_BURST_BASE_URL = "https://burst-env.example.com";
+
+    const config = loadConfig({
+      apiKey: "ark_from_flag",
+      region: "aws-us-west-2",
+      baseUrl: "https://flag.example.com",
+      burstBaseUrl: "https://burst-flag.example.com",
+    });
+
+    expect(config).toEqual({
+      apiKey: "ark_from_flag",
+      region: "aws-us-west-2",
+      baseUrl: "https://flag.example.com",
+      burstBaseUrl: "https://burst-flag.example.com",
+    });
+  });
+
+  it("saved region overrides default region", () => {
+    saveConfig({ region: "aws-us-east-2" });
+    expect(loadConfig().region).toBe("aws-us-east-2");
+  });
+
+  it("does not add the default region when only baseUrl is configured", () => {
+    saveConfig({ baseUrl: "https://dev.example.com" });
+    expect(loadConfig().region).toBeUndefined();
   });
 
   it("saves valid JSON to disk", () => {
@@ -213,5 +259,55 @@ describe("handleConfigCommand", () => {
     expect(code).toBe(0);
     const config = loadConfig();
     expect(config.baseUrl).toBe("https://custom.example.com");
+  });
+
+  it("set region and burst-base-url work", () => {
+    expect(handleConfigCommand(["set", "region", "aws-us-west-2"], {})).toBe(0);
+    expect(handleConfigCommand(["set", "burst-base-url", "https://burst.example.com"], {})).toBe(0);
+    const config = loadConfig();
+    expect(config.region).toBe("aws-us-west-2");
+    expect(config.burstBaseUrl).toBe("https://burst.example.com");
+  });
+
+  it("list prints resolved config with masked API key", () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (msg: string) => logs.push(msg);
+
+    saveConfig({ apiKey: "ark_supersecretkey123", region: "aws-us-west-2" });
+    const code = handleConfigCommand(["list"], {});
+
+    expect(code).toBe(0);
+    expect(logs.some((line) => line.includes("ark_...y123"))).toBe(true);
+    expect(logs.some((line) => line.includes("supersecretkey"))).toBe(false);
+
+    console.log = origLog;
+  });
+});
+
+describe("resolveClientOptions", () => {
+  it("passes resolved SDK client options through", () => {
+    saveConfig({
+      apiKey: "ark_file",
+      region: "aws-us-east-1",
+      baseUrl: "https://file.example.com",
+      burstBaseUrl: "https://burst-file.example.com",
+    });
+
+    expect(resolveClientOptions({
+      apiKey: "ark_flag",
+      region: "aws-us-west-2",
+      baseUrl: "https://flag.example.com",
+      burstBaseUrl: "https://burst-flag.example.com",
+    })).toEqual({
+      apiKey: "ark_flag",
+      region: "aws-us-west-2",
+      baseUrl: "https://flag.example.com",
+      burstBaseUrl: "https://burst-flag.example.com",
+    });
+  });
+
+  it("requires an API key", () => {
+    expect(() => resolveClientOptions()).toThrow("No API key configured");
   });
 });

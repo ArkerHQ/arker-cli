@@ -1,17 +1,19 @@
 import { loadConfig, maskApiKey } from "../config.js";
-import { printInfo, printJson, printField } from "../output.js";
+import { printInfo, printJson } from "../output.js";
 
 /**
- * arker whoami — print resolved API key (masked) and base URL.
+ * arker whoami — print resolved local routing config.
  */
 export async function whoamiCommand(
   flags: Record<string, string | boolean>,
-  overrides?: { apiKey?: string; baseUrl?: string },
+  overrides?: { apiKey?: string; region?: string; baseUrl?: string; burstBaseUrl?: string },
 ): Promise<number> {
   const config = loadConfig(overrides);
   const result = {
     apiKey: config.apiKey ? maskApiKey(config.apiKey) : null,
-    baseUrl: config.baseUrl,
+    region: config.region,
+    baseUrl: config.baseUrl ?? null,
+    burstBaseUrl: config.burstBaseUrl ?? null,
   };
 
   if (flags.json === true) {
@@ -19,13 +21,9 @@ export async function whoamiCommand(
     return 0;
   }
 
-  const field = typeof flags.field === "string" ? flags.field : undefined;
-  if (field) {
-    printField(result, field);
-    return 0;
-  }
-
   printInfo(`API key:  ${config.apiKey ? maskApiKey(config.apiKey) : "(not set)"}`);
-  printInfo(`Base URL: ${config.baseUrl}`);
+  printInfo(`Region:   ${config.region ?? "(not set)"}`);
+  printInfo(`Base URL override: ${config.baseUrl ?? "(not set)"}`);
+  printInfo(`Burst base URL override: ${config.burstBaseUrl ?? "(not set)"}`);
   return 0;
 }

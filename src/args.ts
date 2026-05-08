@@ -7,92 +7,81 @@ export interface ParsedArgs {
 
 /** Flags that never take a value — always treated as boolean true */
 const BOOLEAN_FLAGS = new Set([
-  "help", "version", "json", "no-color", "public",
+  "help", "version", "json", "no-color",
 ]);
 
-/**
- * Parse CLI arguments into structured form.
- *
- * Input is process.argv.slice(2) — just the user-provided args.
- *
- * Flags: --key value (string), --flag (boolean true)
- * Positional: everything else after command/subcommand
- *
- * Only `config` carries a subcommand (set/get/unset); every other CLI
- * verb mirrors a single SDK method.
- */
 export function parseArgs(argv: string[]): ParsedArgs {
-  if (argv.length === 0) {
-    return { command: null, subcommand: null, positional: [], flags: {} };
-  }
-
-  // If first arg is a flag, there's no command — parse everything as flags/positional
-  if (argv[0].startsWith("-")) {
-    const result: ParsedArgs = { command: null, subcommand: null, positional: [], flags: {} };
-    let i = 0;
-    while (i < argv.length) {
-      const arg = argv[i];
-      if (arg.startsWith("--")) {
-        const key = arg.slice(2);
-        const next = argv[i + 1];
-        if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith("--")) {
-          result.flags[key] = true;
-          i++;
-        } else {
-          result.flags[key] = next;
-          i += 2;
-        }
-      } else {
-        result.positional.push(arg);
-        i++;
-      }
-    }
-    return result;
-  }
-
-  const command = argv[0];
-  let subcommand: string | null = null;
-  let startIdx = 1;
-
-  // Only `config` has subcommands. Treat the second arg as a subcommand
-  // when it doesn't look like a flag.
-  if (command === "config" && argv.length > 1 && !argv[1].startsWith("-")) {
-    subcommand = argv[1];
-    startIdx = 2;
-  }
-
+  let command: string | null = null;
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
 
-  let i = startIdx;
+  let i = 0;
   while (i < argv.length) {
     const arg = argv[i];
 
     if (arg === "--") {
-      // Everything after -- is positional
       positional.push(...argv.slice(i + 1));
       break;
     }
 
     if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-
-      // Boolean flags never consume the next arg
-      if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith("--")) {
-        flags[key] = true;
-        i++;
-      } else {
-        flags[key] = next;
-        i += 2;
-      }
+      i = parseFlag(argv, i, flags);
     } else {
-      positional.push(arg);
+      if (command === null) command = arg;
+      else if (command === "run") {
+        positional.push(...parseRunPositional(argv.slice(i), flags));
+        break;
+      } else {
+        positional.push(arg);
+      }
       i++;
     }
   }
 
+  let subcommand: string | null = null;
+  if ((command === "config" || command === "sync") && positional.length > 0) {
+    subcommand = positional.shift() ?? null;
+  }
+
   return { command, subcommand, positional, flags };
+}
+
+function parseRunPositional(argv: string[], flags: Record<string, string | boolean>): string[] {
+  const positional: string[] = [];
+  const id = argv[0];
+  if (!id) return positional;
+
+  // After the remote command starts, every remaining token belongs to it.
+  positional.push(id);
+  let i = 1;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--") {
+      positional.push(...argv.slice(i + 1));
+      break;
+    }
+    if (arg.startsWith("--")) {
+      i = parseFlag(argv, i, flags);
+      continue;
+    }
+    positional.push(...argv.slice(i));
+    break;
+  }
+
+  return positional;
+}
+
+function parseFlag(argv: string[], i: number, flags: Record<string, string | boolean>): number {
+  const key = argv[i]!.slice(2);
+  const next = argv[i + 1];
+
+  if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith("--")) {
+    flags[key] = true;
+    return i + 1;
+  }
+
+  flags[key] = next;
+  return i + 2;
 }
 
 export function hasFlag(flags: Record<string, string | boolean>, key: string): boolean {

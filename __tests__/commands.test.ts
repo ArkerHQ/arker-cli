@@ -1,33 +1,28 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { listCommand } from "../src/commands/list.js";
 import { forkCommand } from "../src/commands/fork.js";
 import { deleteCommand } from "../src/commands/delete.js";
 import { runCommand } from "../src/commands/run.js";
-import { readFileCommand, writeFileCommand } from "../src/commands/files.js";
+import { readFileCommand, syncCommand, writeFileCommand } from "../src/commands/files.js";
 
-/** Build a mock Arker that records the calls made through it. */
 function mockArker(impl: {
-  list?: (opts: any) => Promise<any>;
+  list?: () => Promise<any>;
   fork?: (opts: any) => Promise<{ id: string }>;
-  delete?: () => Promise<void>;
+  delete?: () => Promise<any>;
   run?: (cmd: string, opts: any) => Promise<any>;
   readFile?: (path: string) => Promise<Uint8Array>;
   writeFile?: (path: string, data: any) => Promise<void>;
 }) {
   return {
-    list: vi.fn(impl.list ?? (async () => ({ items: [], total: 0 }))),
+    list: vi.fn(impl.list ?? (async () => ({ vms: [] }))),
     vm: vi.fn((id: string) => ({
       id,
       fork: vi.fn(impl.fork ?? (async () => ({ id: "child" }))),
-      delete: vi.fn(impl.delete ?? (async () => {})),
-      run: vi.fn(impl.run ?? (async () => ({
-        stdout: new Uint8Array(),
-        stderr: new Uint8Array(),
-        exitCode: 0,
-        durationMs: 1,
-        sessionId: "s",
-        cwd: "/",
-      }))),
+      delete: vi.fn(impl.delete ?? (async () => ({ deleted: true }))),
+      run: vi.fn(impl.run ?? (async () => completedRun())),
       sync: {
         readFile: vi.fn(impl.readFile ?? (async () => new Uint8Array())),
         writeFile: vi.fn(impl.writeFile ?? (async () => {})),
@@ -36,213 +31,235 @@ function mockArker(impl: {
   } as any;
 }
 
-describe("--field flag", () => {
-  it("forkCommand --field id outputs only the ID", async () => {
-    const arker = mockArker({ fork: async () => ({ id: "child999" }) });
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      const code = await forkCommand(arker, ["arkuntu"], { field: "id" });
-      expect(code).toBe(0);
-      expect(logSpy).toHaveBeenCalledWith("child999");
-    } finally {
-      logSpy.mockRestore();
-    }
+function completedRun(overrides: Partial<ReturnType<typeof baseCompletedRun>> = {}) {
+  return { ...baseCompletedRun(), ...overrides };
+}
+
+function baseCompletedRun() {
+  return {
+    type: "completed" as const,
+    completed: true,
+    stdout: new Uint8Array(),
+    stdoutEncoding: "utf-8",
+    stderr: new Uint8Array(),
+    stderrEncoding: "utf-8",
+    exitCode: 0,
+  };
+}
+
+describe("listCommand", () => {
+  it("calls arker.list without request adapters", async () => {
+    const arker = mockArker({ list: async () => ({ vms: [] }) });
+
+    const code = await listCommand(arker, { json: true });
+
+    expect(code).toBe(0);
+    expect(arker.list).toHaveBeenCalledWith();
   });
 
-  it("listCommand --field vm_id prints one ID per item", async () => {
+  it("prints the current vms response shape", async () => {
     const arker = mockArker({
       list: async () => ({
-        total: 2,
-        items: [
-          { vm_id: "01A", name: "first", base_image: "arkuntu", region: "us", created_at: "t" },
-          { vm_id: "01B", name: "second", base_image: "arkuntu", region: "us", created_at: "t" },
+        vms: [
+          { vm_id: "vm_1", name: "first", state: "running", source_golden: "ubuntu", created_at: "now", sessions: [] },
         ],
       }),
     });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
     try {
-      const code = await listCommand(arker, { field: "vm_id" });
+      const code = await listCommand(arker, {});
       expect(code).toBe(0);
-      expect(logSpy).toHaveBeenNthCalledWith(1, "01A");
-      expect(logSpy).toHaveBeenNthCalledWith(2, "01B");
+      expect(logSpy.mock.calls.flat().join("\n")).toContain("vm_1");
     } finally {
       logSpy.mockRestore();
     }
   });
 
-  it("runCommand --field exitCode prints just the number", async () => {
+  it("returns 1 on SDK error", async () => {
+    const arker = mockArker({ list: async () => { throw new Error("boom"); } });
+    expect(await listCommand(arker, {})).toBe(1);
+  });
+});
+
+describe("forkCommand", () => {
+  it("calls vm(source).fork with only name", async () => {
+    let capturedFork: any;
     const arker = mockArker({
-      run: async () => ({
-        stdout: new TextEncoder().encode("hi"),
-        stderr: new Uint8Array(),
-        exitCode: 7,
-        durationMs: 1,
-        sessionId: "s",
-        cwd: "/",
-      }),
+      fork: async (opts) => {
+        capturedFork = opts;
+        return { id: "child123" };
+      },
     });
+
+    const code = await forkCommand(arker, ["ubuntu"], { name: "hello", region: "aws-us-west-2" });
+
+    expect(code).toBe(0);
+    expect(arker.vm).toHaveBeenCalledWith("ubuntu");
+    expect(capturedFork).toEqual({ name: "hello" });
+  });
+
+  it("rejects missing source", async () => {
+    expect(await forkCommand(mockArker({}), [], {})).toBe(1);
+  });
+});
+
+describe("deleteCommand", () => {
+  it("calls vm(id).delete without inspecting stale fields", async () => {
+    let deleted = false;
+    const arker = mockArker({ delete: async () => { deleted = true; return {}; } });
+
+    const code = await deleteCommand(arker, ["vm_1"], {});
+
+    expect(code).toBe(0);
+    expect(deleted).toBe(true);
+  });
+
+  it("prints raw delete response as json", async () => {
+    const arker = mockArker({ delete: async () => ({ deleted: true }) });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
     try {
-      const code = await runCommand(arker, ["01ABC", "echo", "hi"], { field: "exitCode" });
+      const code = await deleteCommand(arker, ["vm_1"], { json: true });
       expect(code).toBe(0);
-      expect(logSpy).toHaveBeenCalledWith("7");
+      expect(JSON.parse(logSpy.mock.calls[0]![0])).toEqual({ deleted: true });
     } finally {
       logSpy.mockRestore();
     }
   });
+});
 
-  it("runCommand --field stdout writes bytes (Uint8Array) directly", async () => {
-    const bytes = new TextEncoder().encode("payload");
+describe("runCommand", () => {
+  it("maps --session-id to session_id and returns completed exit code", async () => {
+    let captured: { cmd: string; opts: any } | null = null;
+    const stdout = new TextEncoder().encode("hello");
     const arker = mockArker({
-      run: async () => ({
-        stdout: bytes,
-        stderr: new Uint8Array(),
-        exitCode: 0,
-        durationMs: 1,
-        sessionId: "s",
-        cwd: "/",
-      }),
+      run: async (cmd, opts) => {
+        captured = { cmd, opts };
+        return completedRun({ stdout, exitCode: 42 });
+      },
     });
     const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
     try {
-      const code = await runCommand(arker, ["01ABC", "echo", "hi"], { field: "stdout" });
+      const code = await runCommand(arker, ["vm_1", "echo", "hello"], { "session-id": "s1", timeout: "5000" });
+      expect(code).toBe(42);
+      expect(captured).toEqual({ cmd: "echo hello", opts: { session_id: "s1", timeout: 5000 } });
+      expect(writeSpy).toHaveBeenCalledWith(stdout);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it("prints background run ids", async () => {
+    const arker = mockArker({
+      run: async () => ({ type: "background", completed: false, runId: "run_1", tunnels: [], network: null }),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const code = await runCommand(arker, ["vm_1", "sleep 60"], {});
       expect(code).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith("run_1");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("prints pty session info", async () => {
+    const arker = mockArker({
+      run: async () => ({ type: "pty", pty: true, sessionId: "s1", wsUrl: "wss://example.test" }),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const code = await runCommand(arker, ["vm_1", "bash"], {});
+      expect(code).toBe(0);
+      expect(logSpy).toHaveBeenCalledWith("session_id: s1");
+      expect(logSpy).toHaveBeenCalledWith("ws_url: wss://example.test");
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("rejects missing id or command", async () => {
+    expect(await runCommand(mockArker({}), [], {})).toBe(1);
+    expect(await runCommand(mockArker({}), ["vm_1"], {})).toBe(1);
+  });
+});
+
+describe("file commands", () => {
+  it("calls sync.readFile and writes bytes to stdout", async () => {
+    let captured = "";
+    const bytes = new TextEncoder().encode("filebytes");
+    const arker = mockArker({
+      readFile: async (path) => {
+        captured = path;
+        return bytes;
+      },
+    });
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      const code = await readFileCommand(arker, ["vm_1", "/home/user/x.txt"]);
+      expect(code).toBe(0);
+      expect(captured).toBe("/home/user/x.txt");
       expect(writeSpy).toHaveBeenCalledWith(bytes);
     } finally {
       writeSpy.mockRestore();
     }
   });
-});
 
-describe("listCommand", () => {
-  it("calls arker.list with parsed flags", async () => {
-    const arker = mockArker({
-      list: async (opts) => ({ items: [], total: 0, _opts: opts }),
-    });
-    const code = await listCommand(arker, { limit: "5", q: "foo", sort: "-created_at", json: true });
-    expect(code).toBe(0);
-    expect(arker.list).toHaveBeenCalledWith({ limit: 5, q: "foo", sort: "-created_at", offset: undefined });
-  });
-
-  it("returns 1 on SDK error", async () => {
-    const arker = mockArker({ list: async () => { throw new Error("boom"); } });
-    const code = await listCommand(arker, {});
-    expect(code).toBe(1);
-  });
-});
-
-describe("forkCommand", () => {
-  it("calls vm(id).fork with parsed flags", async () => {
-    let capturedFork: any;
-    const arker = mockArker({
-      fork: async (opts) => { capturedFork = opts; return { id: "child123" }; },
-    });
-    const code = await forkCommand(arker, ["arkuntu"], { name: "hello", region: "us-west-2", public: true });
-    expect(code).toBe(0);
-    expect(arker.vm).toHaveBeenCalledWith("arkuntu");
-    expect(capturedFork).toEqual({ name: "hello", region: "us-west-2", isPublic: true });
-  });
-
-  it("rejects missing id", async () => {
-    const code = await forkCommand(mockArker({}), [], {});
-    expect(code).toBe(1);
-  });
-});
-
-describe("deleteCommand", () => {
-  it("calls vm(id).delete", async () => {
-    let deleted = false;
-    const arker = mockArker({ delete: async () => { deleted = true; } });
-    const code = await deleteCommand(arker, ["01ABC"], {});
-    expect(code).toBe(0);
-    expect(deleted).toBe(true);
-  });
-
-  it("rejects missing id", async () => {
-    const code = await deleteCommand(mockArker({}), [], {});
-    expect(code).toBe(1);
-  });
-});
-
-describe("runCommand", () => {
-  it("calls vm(id).run with id and code, returns exitCode", async () => {
-    let captured: { cmd: string; opts: any } | null = null;
-    const arker = mockArker({
-      run: async (cmd, opts) => {
-        captured = { cmd, opts };
-        return {
-          stdout: new TextEncoder().encode("hello"),
-          stderr: new Uint8Array(),
-          exitCode: 42,
-          durationMs: 1,
-          sessionId: "s",
-          cwd: "/",
-        };
-      },
-    });
-    // Suppress stdout in the test
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    const code = await runCommand(arker, ["01ABC", "echo", "hello"], {});
-    writeSpy.mockRestore();
-    expect(code).toBe(42);
-    expect(captured!.cmd).toBe("echo hello");
-    expect(captured!.opts).toEqual({ sessionId: undefined, timeout: undefined });
-  });
-
-  it("rejects missing id or code", async () => {
-    expect(await runCommand(mockArker({}), [], {})).toBe(1);
-    expect(await runCommand(mockArker({}), ["01ABC"], {})).toBe(1);
-  });
-
-  it("passes session-id and timeout flags", async () => {
-    let captured: any = null;
-    const arker = mockArker({
-      run: async (_cmd, opts) => {
-        captured = opts;
-        return { stdout: new Uint8Array(), stderr: new Uint8Array(), exitCode: 0, durationMs: 1, sessionId: "s", cwd: "/" };
-      },
-    });
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    await runCommand(arker, ["01ABC", "ls"], { "session-id": "s1", timeout: "5000" });
-    writeSpy.mockRestore();
-    expect(captured).toEqual({ sessionId: "s1", timeout: 5000 });
-  });
-});
-
-describe("readFileCommand", () => {
-  it("calls sync.readFile and writes bytes to stdout", async () => {
-    let captured = "";
-    const arker = mockArker({
-      readFile: async (path) => { captured = path; return new TextEncoder().encode("filebytes"); },
-    });
-    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    const code = await readFileCommand(arker, ["01ABC", "/home/user/x.txt"]);
-    writeSpy.mockRestore();
-    expect(code).toBe(0);
-    expect(captured).toBe("/home/user/x.txt");
-  });
-
-  it("rejects missing args", async () => {
-    expect(await readFileCommand(mockArker({}), [])).toBe(1);
-    expect(await readFileCommand(mockArker({}), ["01ABC"])).toBe(1);
-  });
-});
-
-describe("writeFileCommand", () => {
-  it("calls sync.writeFile with inline data", async () => {
+  it("legacy write-file calls sync.writeFile with inline data", async () => {
     let capturedPath = "";
     let capturedData: any = null;
     const arker = mockArker({
-      writeFile: async (path, data) => { capturedPath = path; capturedData = data; },
+      writeFile: async (path, data) => {
+        capturedPath = path;
+        capturedData = data;
+      },
     });
-    const code = await writeFileCommand(arker, ["01ABC", "/home/user/x.txt", "hello"]);
+
+    const code = await writeFileCommand(arker, ["vm_1", "/home/user/x.txt", "hello"]);
+
     expect(code).toBe(0);
     expect(capturedPath).toBe("/home/user/x.txt");
     expect(capturedData).toBe("hello");
   });
 
-  it("rejects missing args", async () => {
-    expect(await writeFileCommand(mockArker({}), [])).toBe(1);
-    expect(await writeFileCommand(mockArker({}), ["01ABC"])).toBe(1);
+  it("sync read maps directly to sync.readFile", async () => {
+    const arker = mockArker({ readFile: async () => new TextEncoder().encode("ok") });
+    const writeSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      const code = await syncCommand(arker, "read", ["vm_1", "/home/user/x.txt"], {});
+      expect(code).toBe(0);
+      expect(writeSpy).toHaveBeenCalledWith(new TextEncoder().encode("ok"));
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
+  it("sync write reads a local file and calls sync.writeFile", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "arker-cli-files-"));
+    const localPath = join(tempDir, "input.txt");
+    let capturedPath = "";
+    let capturedData: any = null;
+    const arker = mockArker({
+      writeFile: async (path, data) => {
+        capturedPath = path;
+        capturedData = data;
+      },
+    });
+
+    try {
+      writeFileSync(localPath, "hello");
+      const code = await syncCommand(arker, "write", ["vm_1", "/home/user/input.txt", localPath], {});
+      expect(code).toBe(0);
+      expect(capturedPath).toBe("/home/user/input.txt");
+      expect(new TextDecoder().decode(capturedData)).toBe("hello");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

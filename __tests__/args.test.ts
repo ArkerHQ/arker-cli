@@ -14,21 +14,21 @@ describe("parseArgs", () => {
   });
 
   it("parses command with positional args", () => {
-    const r = parseArgs(["fork", "arkuntu"]);
+    const r = parseArgs(["fork", "ubuntu"]);
     expect(r.command).toBe("fork");
-    expect(r.positional).toEqual(["arkuntu"]);
+    expect(r.positional).toEqual(["ubuntu"]);
   });
 
   it("parses string flag with value", () => {
-    const r = parseArgs(["fork", "arkuntu", "--name", "hello"]);
+    const r = parseArgs(["fork", "ubuntu", "--name", "hello"]);
     expect(r.command).toBe("fork");
-    expect(r.positional).toEqual(["arkuntu"]);
+    expect(r.positional).toEqual(["ubuntu"]);
     expect(r.flags.name).toBe("hello");
   });
 
   it("recognizes boolean flags without consuming next arg", () => {
-    const r = parseArgs(["fork", "arkuntu", "--public", "--name", "hello"]);
-    expect(r.flags.public).toBe(true);
+    const r = parseArgs(["fork", "ubuntu", "--json", "--name", "hello"]);
+    expect(r.flags.json).toBe(true);
     expect(r.flags.name).toBe("hello");
   });
 
@@ -61,11 +61,30 @@ describe("parseArgs", () => {
     expect(r.positional).toEqual(["01ABC", "echo hello"]);
   });
 
-  it("parses run with --session-id and --timeout flags", () => {
-    const r = parseArgs(["run", "01ABC", "echo hi", "--session-id", "s1", "--timeout", "5000"]);
+  it("parses run flags before the remote command starts", () => {
+    const r = parseArgs(["run", "01ABC", "--session-id", "s1", "--timeout", "5000", "echo", "hi"]);
     expect(r.flags["session-id"]).toBe("s1");
     expect(r.flags.timeout).toBe("5000");
-    expect(r.positional).toEqual(["01ABC", "echo hi"]);
+    expect(r.positional).toEqual(["01ABC", "echo", "hi"]);
+  });
+
+  it("keeps remote command flags after the command starts", () => {
+    const r = parseArgs(["run", "01ABC", "--timeout", "5000", "pytest", "-q", "--maxfail=1"]);
+    expect(r.flags.timeout).toBe("5000");
+    expect(r.flags["maxfail=1"]).toBeUndefined();
+    expect(r.positional).toEqual(["01ABC", "pytest", "-q", "--maxfail=1"]);
+  });
+
+  it("treats late run options as remote command args", () => {
+    const r = parseArgs(["run", "01ABC", "echo", "hi", "--timeout", "5000"]);
+    expect(r.flags.timeout).toBeUndefined();
+    expect(r.positional).toEqual(["01ABC", "echo", "hi", "--timeout", "5000"]);
+  });
+
+  it("supports -- as an explicit run command delimiter", () => {
+    const r = parseArgs(["run", "01ABC", "--timeout", "5000", "--", "pytest", "-q", "--maxfail=1"]);
+    expect(r.flags.timeout).toBe("5000");
+    expect(r.positional).toEqual(["01ABC", "pytest", "-q", "--maxfail=1"]);
   });
 
   it("parses write-file with stdin sentinel", () => {
@@ -80,7 +99,7 @@ describe("parseArgs", () => {
   });
 
   it("recognizes config subcommand", () => {
-    for (const sub of ["set", "get", "unset"]) {
+    for (const sub of ["set", "get", "list"]) {
       const r = parseArgs(["config", sub, "api-key", "ark_test"]);
       expect(r.command).toBe("config");
       expect(r.subcommand).toBe(sub);
@@ -88,9 +107,9 @@ describe("parseArgs", () => {
   });
 
   it("does NOT treat fork second arg as subcommand", () => {
-    const r = parseArgs(["fork", "arkuntu"]);
+    const r = parseArgs(["fork", "ubuntu"]);
     expect(r.subcommand).toBeNull();
-    expect(r.positional).toEqual(["arkuntu"]);
+    expect(r.positional).toEqual(["ubuntu"]);
   });
 
   it("handles -- separator: everything after is positional", () => {
@@ -100,8 +119,34 @@ describe("parseArgs", () => {
   });
 
   it("--api-key and --base-url consume their values", () => {
-    const r = parseArgs(["list", "--api-key", "ark_xyz", "--base-url", "http://localhost:8080"]);
+    const r = parseArgs([
+      "list",
+      "--api-key",
+      "ark_xyz",
+      "--region",
+      "aws-us-west-2",
+      "--base-url",
+      "http://localhost:8080",
+      "--burst-base-url",
+      "http://localhost:8081",
+    ]);
     expect(r.flags["api-key"]).toBe("ark_xyz");
+    expect(r.flags.region).toBe("aws-us-west-2");
     expect(r.flags["base-url"]).toBe("http://localhost:8080");
+    expect(r.flags["burst-base-url"]).toBe("http://localhost:8081");
+  });
+
+  it("parses global flags before the command", () => {
+    const r = parseArgs(["--api-key", "ark_xyz", "--json", "list"]);
+    expect(r.command).toBe("list");
+    expect(r.flags["api-key"]).toBe("ark_xyz");
+    expect(r.flags.json).toBe(true);
+  });
+
+  it("recognizes sync subcommand", () => {
+    const r = parseArgs(["sync", "write", "vm_1", "/remote.txt", "./local.txt"]);
+    expect(r.command).toBe("sync");
+    expect(r.subcommand).toBe("write");
+    expect(r.positional).toEqual(["vm_1", "/remote.txt", "./local.txt"]);
   });
 });

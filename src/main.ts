@@ -1,10 +1,10 @@
-import { Arker } from "@arker-ai/sdk";
 import { parseArgs, getFlagString } from "./args.js";
-import { handleConfigCommand, loadConfig } from "./config.js";
+import { buildClient, type ClientOverrides } from "./client.js";
+import { handleConfigCommand } from "./config.js";
 import { listCommand } from "./commands/list.js";
 import { forkCommand } from "./commands/fork.js";
 import { deleteCommand } from "./commands/delete.js";
-import { readFileCommand, writeFileCommand } from "./commands/files.js";
+import { readFileCommand, syncCommand, writeFileCommand } from "./commands/files.js";
 import { runCommand } from "./commands/run.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
@@ -17,31 +17,31 @@ Usage:
 
 Commands:
   list                            List your VMs
-  fork <id|template>              Fork a VM (or create one from a template)
-  run <id> <command>              Execute a command on a VM
-  read-file <id> <path>           Read a file from a VM (bytes → stdout)
-  write-file <id> <path> [data]   Write data to a VM file ("-" or omitted → stdin)
+  fork <source>                   Fork a VM from a source
+  run <id> [options] <command>    Execute a command on a VM
+  sync read <id> <path>           Read a file from a VM (bytes → stdout)
+  sync write <id> <path> <file>   Write a local file to a VM path
   delete <id>                     Delete a VM
-  config {set,get} <key> [val]    Manage CLI config
+  config {set,get,list} <key> [val] Manage CLI config
   whoami                          Show resolved config
 
 Global flags:
   --help            Show help
   --version         Show version
   --json            Output raw JSON
-  --field NAME      Print one property as plain text (script-friendly)
   --no-color        Disable colored output
   --api-key KEY     Override API key for this invocation
+  --region REGION   Override region for this invocation
   --base-url URL    Override base URL for this invocation
+  --burst-base-url URL Override burst base URL for this invocation
 
 Examples:
-  ID=$(arker fork arkuntu --field id)         # capture just the ID
-  arker fork arkuntu --name hello
-  arker run 01ABC... 'echo hi'
-  arker run 01ABC... 'date' --field stdout    # only the command's stdout
-  arker list --field vm_id                    # one ID per line
-  echo 'hi' | arker write-file 01ABC... /home/user/x.txt -
-  arker read-file 01ABC... /home/user/x.txt > out.txt
+  arker config set api-key ark_live_...
+  arker config set region aws-us-west-2
+  arker fork ubuntu --name dev-box
+  arker run 01ABC... --timeout 5000 echo hi
+  arker sync read 01ABC... /home/user/x.txt > out.txt
+  arker sync write 01ABC... /home/user/x.txt ./file.txt
   arker delete 01ABC...
 `;
 
@@ -58,14 +58,16 @@ async function main() {
     process.exit(0);
   }
 
-  const overrides = {
+  const overrides: ClientOverrides = {
     apiKey: getFlagString(args.flags, "api-key") ?? undefined,
+    region: getFlagString(args.flags, "region") ?? undefined,
     baseUrl: getFlagString(args.flags, "base-url") ?? undefined,
+    burstBaseUrl: getFlagString(args.flags, "burst-base-url") ?? undefined,
   };
 
   switch (args.command) {
     case "config":
-      process.exit(handleConfigCommand(args.positional, args.flags));
+      process.exit(handleConfigCommand(commandArgs(args.subcommand, args.positional), args.flags));
     case "whoami":
       process.exit(await whoamiCommand(args.flags, overrides));
     case "list":
@@ -76,10 +78,12 @@ async function main() {
       process.exit(await deleteCommand(buildClient(overrides), args.positional, args.flags));
     case "run":
       process.exit(await runCommand(buildClient(overrides), args.positional, args.flags));
+    case "sync":
+      process.exit(await syncCommand(buildClient(overrides), args.subcommand, args.positional, args.flags));
     case "read-file":
-      process.exit(await readFileCommand(buildClient(overrides), args.positional));
+      process.exit(await readFileCommand(buildClient(overrides), args.positional, args.flags));
     case "write-file":
-      process.exit(await writeFileCommand(buildClient(overrides), args.positional));
+      process.exit(await writeFileCommand(buildClient(overrides), args.positional, args.flags));
     default:
       console.error(`Unknown command: ${args.command}`);
       console.error("Run 'arker --help' for usage.");
@@ -87,13 +91,8 @@ async function main() {
   }
 }
 
-function buildClient(overrides: { apiKey?: string; baseUrl?: string }): Arker {
-  const config = loadConfig(overrides);
-  if (!config.apiKey) {
-    console.error("No API key configured. Run 'arker config set api-key <key>' or pass --api-key.");
-    process.exit(1);
-  }
-  return new Arker({ apiKey: config.apiKey, baseUrl: config.baseUrl });
+function commandArgs(subcommand: string | null, positional: string[]): string[] {
+  return subcommand ? [subcommand, ...positional] : positional;
 }
 
 main().catch((err) => {

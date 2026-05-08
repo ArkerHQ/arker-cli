@@ -18,12 +18,12 @@
     "build": "bun run build.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepublishOnly": "bun run build"
-  },
-  "dependencies": {
-    "@arker-ai/sdk": "^0.2.1"
+    "typecheck": "tsc --noEmit",
+    "verify": "bun run test && bun run typecheck && bun run build",
+    "prepublishOnly": "bun run verify"
   },
   "devDependencies": {
+    "@types/node": "18",
     "esbuild": "^0.27.0",
     "vitest": "^3.0.0"
   },
