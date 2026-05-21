@@ -56,6 +56,7 @@ arker delete "$VM_ID"
 |---|---|
 | `arker fork <source> [--name <name>]` | `arker.vm(source).fork({ name })` |
 | `arker run <vm-id> [--session-id <id>] [--timeout <ms>] <command> [args...]` | `arker.vm(vmId).run(command, options)` |
+| `arker shell <vm-id>` | repeated `arker.vm(vmId).run(line, { session_id, timeout })` |
 | `arker sync read <vm-id> <remote-path>` | `arker.vm(vmId).sync.readFile(path)` |
 | `arker sync write <vm-id> <remote-path> <local-path>` | `arker.vm(vmId).sync.writeFile(path, data)` |
 | `arker list` | `arker.list()` |
@@ -107,6 +108,36 @@ token, everything belongs to the VM command:
 arker run "$VM_ID" --timeout 5000 pytest -q --maxfail=1
 arker run "$VM_ID" --timeout 5000 -- pytest -q --maxfail=1
 ```
+
+## Shell
+
+```bash
+arker shell "$VM_ID"
+arker --timeout 30000 shell "$VM_ID"
+```
+
+`shell` opens an interactive REPL backed by the VM's `run` API. Each line you
+type is sent as one `run` call, all sharing a single auto-generated
+`session_id` so `cd`, `export`, and other shell state persist between lines.
+The prompt is `arker@<short-vm-id>:<cwd>$` with the cwd shown relative to
+`$HOME` (collapsed to `~`).
+
+Type `exit` or press Ctrl+D to leave. The shell prints `Shell session ended`
+on its way out.
+
+Notes and limitations:
+
+- `--timeout` applies **per command**, not per session — every line you type
+  is capped individually (this also caps the internal `pwd` refresh that
+  updates the prompt).
+- Each command is request/response. Long-running or interactive commands
+  (`tail -f`, `top`, `vim`) will not stream output and will hit `--timeout`.
+- Ctrl+C does not interrupt an in-flight remote command in this version;
+  press it at an idle prompt to clear the current input line.
+- Up-arrow history is available within the session but is not persisted to
+  disk.
+- Multi-line input (heredocs spanning lines, etc.) is not supported — each
+  line is its own `run`.
 
 ## File Sync
 
