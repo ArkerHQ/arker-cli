@@ -6,6 +6,7 @@ import { forkCommand } from "./commands/fork.js";
 import { deleteCommand } from "./commands/delete.js";
 import { readFileCommand, syncCommand, writeFileCommand } from "./commands/files.js";
 import { runCommand } from "./commands/run.js";
+import { shellCommand } from "./commands/shell.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
 const VERSION = "0.3.1";
@@ -19,6 +20,7 @@ Commands:
   list                            List your VMs
   fork <source>                   Fork a VM from a source
   run <id> [options] <command>    Execute a command on a VM
+  shell <id>                      Open an interactive shell to a VM
   sync read <id> <path>           Read a file from a VM (bytes → stdout)
   sync write <id> <path> <file>   Write a local file to a VM path
   delete <id>                     Delete a VM
@@ -78,6 +80,8 @@ async function main() {
       process.exit(await deleteCommand(buildClient(overrides), args.positional, args.flags));
     case "run":
       process.exit(await runCommand(buildClient(overrides), args.positional, args.flags));
+    case "shell":
+      process.exit(await shellCommand(buildClient(overrides), args.positional, args.flags));
     case "sync":
       process.exit(await syncCommand(buildClient(overrides), args.subcommand, args.positional, args.flags));
     case "read-file":
