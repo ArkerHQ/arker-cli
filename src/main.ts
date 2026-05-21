@@ -9,7 +9,7 @@ import { runCommand } from "./commands/run.js";
 import { shellCommand } from "./commands/shell.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const HELP = `arker v${VERSION} — CLI for the Arker virtual computer platform
 
