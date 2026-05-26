@@ -143,6 +143,20 @@ describe("parseArgs", () => {
     expect(r.flags.json).toBe(true);
   });
 
+  it("parses shell with a preload command after --", () => {
+    const r = parseArgs(["shell", "vm_1", "--exit", "--", "echo", "hi"]);
+    expect(r.command).toBe("shell");
+    expect(r.flags.exit).toBe(true);
+    expect(r.positional).toEqual(["vm_1", "echo", "hi"]);
+  });
+
+  it("treats --exit as a boolean flag (does not consume next token)", () => {
+    const r = parseArgs(["shell", "vm_1", "--exit", "--timeout", "5000"]);
+    expect(r.flags.exit).toBe(true);
+    expect(r.flags.timeout).toBe("5000");
+    expect(r.positional).toEqual(["vm_1"]);
+  });
+
   it("recognizes sync subcommand", () => {
     const r = parseArgs(["sync", "write", "vm_1", "/remote.txt", "./local.txt"]);
     expect(r.command).toBe("sync");

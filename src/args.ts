@@ -7,7 +7,7 @@ export interface ParsedArgs {
 
 /** Flags that never take a value — always treated as boolean true */
 const BOOLEAN_FLAGS = new Set([
-  "help", "version", "json", "no-color",
+  "help", "version", "json", "no-color", "exit",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {

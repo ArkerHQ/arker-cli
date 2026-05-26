@@ -9,7 +9,7 @@ import { runCommand } from "./commands/run.js";
 import { shellCommand } from "./commands/shell.js";
 import { whoamiCommand } from "./commands/whoami.js";
 
-const VERSION = "0.3.2";
+const VERSION = "0.3.3";
 
 const HELP = `arker v${VERSION} — CLI for the Arker virtual computer platform
 
@@ -20,7 +20,8 @@ Commands:
   list                            List your VMs
   fork <source>                   Fork a VM from a source
   run <id> [options] <command>    Execute a command on a VM
-  shell <id>                      Open an interactive shell to a VM
+  shell <id> [-- <cmd>]           Open an interactive shell to a VM
+                                  (run cmd first; add --exit to exit after)
   sync read <id> <path>           Read a file from a VM (bytes → stdout)
   sync write <id> <path> <file>   Write a local file to a VM path
   delete <id>                     Delete a VM

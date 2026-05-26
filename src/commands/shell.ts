@@ -13,10 +13,15 @@ interface ShellState {
 }
 
 /**
- * arker shell <id>
+ * arker shell <id> [-- <command> [args...]]
  *
  * Interactive shell over `Arker.vm(id).run`. Each line is one `run` call,
  * scoped to a generated session_id so cd/export/etc. persist.
+ *
+ * Positional args after the vm-id are joined into a single command line and
+ * executed after the MOTD prints. Without `--exit`, the shell then drops into
+ * the interactive prompt; with `--exit`, the shell exits with that command's
+ * exit code (bash -c style).
  */
 export async function shellCommand(
   arker: Arker,
@@ -25,7 +30,7 @@ export async function shellCommand(
 ): Promise<number> {
   const vmId = positional[0];
   if (!vmId) {
-    printError("Usage: arker shell <vm-id>");
+    printError("Usage: arker shell <vm-id> [--exit] [-- <command> [args...]]");
     return 1;
   }
 
@@ -34,6 +39,9 @@ export async function shellCommand(
     printError("Invalid --timeout value; expected milliseconds.");
     return 1;
   }
+
+  const preload = positional.slice(1).join(" ").trim();
+  const exitAfter = flags.exit === true;
 
   let sessionId: string;
   try {
@@ -59,7 +67,7 @@ export async function shellCommand(
       if (!initial.motd.endsWith("\n")) process.stderr.write("\n");
     }
 
-    return await runShellLoop({
+    const state: ShellState = {
       arker,
       vmId,
       sessionId,
@@ -67,7 +75,34 @@ export async function shellCommand(
       remoteHome: initial.home,
       cwd: initial.cwd,
       inFlight: false,
-    });
+    };
+
+    let preloadExitCode = 0;
+    let preloadAskedExit = false;
+    if (preload !== "") {
+      if (preload === "exit") {
+        preloadAskedExit = true;
+      } else {
+        const step = await executeOne(state, preload);
+        if (step.kind === "fatal") {
+          printError(`shell ended: ${step.message}`);
+          return 1;
+        }
+        if (step.kind === "recoverable") {
+          printError(`error: ${step.message}`);
+          preloadExitCode = 1;
+        } else {
+          preloadExitCode = step.exitCode;
+        }
+      }
+    }
+
+    if (exitAfter || preloadAskedExit) {
+      printInfo("Shell session ended");
+      return preloadExitCode;
+    }
+
+    return await runShellLoop(state);
   } finally {
     // Best-effort cleanup. Don't drown the user in noise if the VM is already gone.
     await deleteSession(arker, vmId, sessionId).catch(() => {});
@@ -138,33 +173,15 @@ async function runShellLoop(state: ShellState): Promise<number> {
         break;
       }
 
-      state.inFlight = true;
-      try {
-        await runUserCommand(state, rawLine);
-      } catch (err: any) {
-        if (classifyError(err, state.vmId) === "fatal") {
-          printError(`shell ended: ${err.message ?? err}`);
-          exitCode = 1;
-          state.inFlight = false;
-          break;
-        }
-        printError(`error: ${err.message ?? err}`);
+      const step = await executeOne(state, rawLine);
+      if (step.kind === "fatal") {
+        printError(`shell ended: ${step.message}`);
+        exitCode = 1;
+        break;
       }
-
-      try {
-        const newCwd = await fetchCwd(state.arker, state.vmId, state.sessionId, state.timeout);
-        state.cwd = newCwd;
-      } catch (err: any) {
-        if (classifyError(err, state.vmId) === "fatal") {
-          printError(`shell ended: ${err.message ?? err}`);
-          exitCode = 1;
-          state.inFlight = false;
-          break;
-        }
-        // Recoverable: keep last-known cwd; prompt may be stale until next refresh.
+      if (step.kind === "recoverable") {
+        printError(`error: ${step.message}`);
       }
-
-      state.inFlight = false;
       refreshPrompt();
     }
   } finally {
@@ -175,12 +192,38 @@ async function runShellLoop(state: ShellState): Promise<number> {
   return exitCode;
 }
 
-async function runUserCommand(state: ShellState, line: string): Promise<void> {
-  const result = await state.arker.vm(state.vmId).run(line, {
-    session_id: state.sessionId,
-    timeout: state.timeout,
-  });
-  writeCompletedToTty(result);
+type StepResult =
+  | { kind: "ok"; exitCode: number }
+  | { kind: "fatal"; message: string }
+  | { kind: "recoverable"; message: string };
+
+async function executeOne(state: ShellState, line: string): Promise<StepResult> {
+  state.inFlight = true;
+  let exitCode = 0;
+  try {
+    const result = await state.arker.vm(state.vmId).run(line, {
+      session_id: state.sessionId,
+      timeout: state.timeout,
+    });
+    writeCompletedToTty(result);
+    if (result.type === "completed") exitCode = result.exitCode;
+  } catch (err: any) {
+    state.inFlight = false;
+    return { kind: classifyError(err, state.vmId), message: err.message ?? String(err) };
+  }
+
+  try {
+    state.cwd = await fetchCwd(state.arker, state.vmId, state.sessionId, state.timeout);
+  } catch (err: any) {
+    if (classifyError(err, state.vmId) === "fatal") {
+      state.inFlight = false;
+      return { kind: "fatal", message: err.message ?? String(err) };
+    }
+    // Recoverable: keep last-known cwd; prompt may be stale until next refresh.
+  }
+
+  state.inFlight = false;
+  return { kind: "ok", exitCode };
 }
 
 function writeCompletedToTty(result: RunResult): void {

@@ -56,7 +56,7 @@ arker delete "$VM_ID"
 |---|---|
 | `arker fork <source> [--name <name>]` | `arker.vm(source).fork({ name })` |
 | `arker run <vm-id> [--session-id <id>] [--timeout <ms>] <command> [args...]` | `arker.vm(vmId).run(command, options)` |
-| `arker shell <vm-id>` | repeated `arker.vm(vmId).run(line, { session_id, timeout })` |
+| `arker shell <vm-id> [--exit] [-- <command> [args...]]` | repeated `arker.vm(vmId).run(line, { session_id, timeout })` |
 | `arker sync read <vm-id> <remote-path>` | `arker.vm(vmId).sync.readFile(path)` |
 | `arker sync write <vm-id> <remote-path> <local-path>` | `arker.vm(vmId).sync.writeFile(path, data)` |
 | `arker list` | `arker.list()` |
@@ -114,6 +114,8 @@ arker run "$VM_ID" --timeout 5000 -- pytest -q --maxfail=1
 ```bash
 arker shell "$VM_ID"
 arker --timeout 30000 shell "$VM_ID"
+arker shell "$VM_ID" -- echo ready
+arker shell "$VM_ID" --exit -- uname -a
 ```
 
 `shell` opens an interactive REPL backed by the VM's `run` API. Each line you
@@ -124,6 +126,13 @@ The prompt is `arker@<short-vm-id>:<cwd>$` with the cwd shown relative to
 
 Type `exit` or press Ctrl+D to leave. The shell prints `Shell session ended`
 on its way out.
+
+Positional arguments after the vm-id are joined into a single command line and
+executed after the welcome message, before the interactive prompt. Use `--` to
+pass a command that contains `--`-prefixed flags. Pass `--exit` to run the
+preloaded command and exit with its exit code, bash-`-c` style. Without
+`--exit`, the shell drops into the interactive prompt after the command
+finishes.
 
 Notes and limitations:
 
